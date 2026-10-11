@@ -3,8 +3,6 @@ name: Import and brand Aurora skills
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/import-aurora-skills.yml"
   workflow_dispatch:
 
 permissions:
