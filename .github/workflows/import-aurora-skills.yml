@@ -1,0 +1,118 @@
+name: Import and brand Aurora skills
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/import-aurora-skills.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: import-aurora-skills
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out destination repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Import upstream source files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 https://github.com/EduardAdmin/aurora-skills.git /tmp/aurora-source
+          git clone --depth 1 https://github.com/anthropics/skills.git /tmp/official-skills
+
+          rm -rf aurora-design aurora-work artifact-types skills
+          mkdir -p aurora-design aurora-work artifact-types
+
+          cp -a /tmp/aurora-source/Anthropic/claude-design/. aurora-design/
+          cp -a /tmp/aurora-source/Anthropic/claude-cowork/. aurora-work/
+          cp -a /tmp/aurora-source/Anthropic/artifact-types/. artifact-types/
+          cp -a /tmp/official-skills/skills ./skills
+          cp /tmp/official-skills/README.md UPSTREAM_SKILLS_README.md
+          cp /tmp/official-skills/THIRD_PARTY_NOTICES.md THIRD_PARTY_NOTICES.md
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          roots = [Path("aurora-design"), Path("aurora-work"), Path("artifact-types"), Path("skills")]
+          replacements = [
+              ("Claude Design", "Aurora Design"),
+              ("Claude Cowork", "Aurora Work"),
+              ("claude-design", "aurora-design"),
+              ("claude-cowork", "aurora-work"),
+          ]
+          text_extensions = {
+              ".md", ".mdx", ".txt", ".json", ".yaml", ".yml", ".js", ".jsx",
+              ".ts", ".tsx", ".py", ".html", ".css", ".svg", ".sh", ".toml"
+          }
+
+          # Rename product-specific paths without changing technical API names.
+          for root in roots:
+              for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+                  new_name = path.name.replace("claude-design", "aurora-design").replace("claude-cowork", "aurora-work")
+                  if new_name != path.name:
+                      path.rename(path.with_name(new_name))
+
+          # Rebrand product labels and internal path references. Keep license and
+          # attribution files intact, and do not rewrite technical names like Claude API.
+          for root in roots:
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.suffix.lower() not in text_extensions:
+                      continue
+                  if path.name.lower() in {"license", "license.txt", "notice", "notices", "third_party_notices.md"}:
+                      continue
+                  try:
+                      original = path.read_text(encoding="utf-8")
+                  except (UnicodeDecodeError, OSError):
+                      continue
+                  updated = original
+                  for old, new in replacements:
+                      updated = updated.replace(old, new)
+                  if updated != original:
+                      path.write_text(updated, encoding="utf-8")
+          PY
+
+          cat > README.md <<'EOF'
+          # Aurora Agent Skills
+
+          A curated collection of agent skills, design workflows, artifact-type guidance, and supporting resources adapted for the Aurora ecosystem.
+
+          ## Contents
+
+          - **`aurora-design/`** — design workflows and starter components adapted from the Claude Design materials in the source repository.
+          - **`aurora-work/`** — cowork workflows adapted from the Claude Cowork materials in the source repository.
+          - **`artifact-types/`** — artifact-type instructions and references.
+          - **`skills/`** — skills from the official Anthropic skills repository.
+          - **`UPSTREAM_SKILLS_README.md`** and **`THIRD_PARTY_NOTICES.md`** — upstream documentation and third-party notices.
+
+          ## Sources and attribution
+
+          - Design, cowork, and artifact-type materials: [EduardAdmin/aurora-skills](https://github.com/EduardAdmin/aurora-skills).
+          - Official skills collection: [anthropics/skills](https://github.com/anthropics/skills).
+
+          Product-specific labels and internal folder references are adapted for Aurora where appropriate. Technical names and upstream attribution are retained where changing them would be misleading. Preserve the relevant per-skill license files and third-party notices when redistributing this repository.
+
+          ## Updates
+
+          Run the **Import and brand Aurora skills** workflow from the GitHub Actions tab to refresh the imported files from their upstream repositories.
+          EOF
+
+          git add -A README.md aurora-design aurora-work artifact-types skills UPSTREAM_SKILLS_README.md THIRD_PARTY_NOTICES.md
+          if git diff --cached --quiet; then
+            echo "No imported file changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Import design, cowork, artifact types, and official skills"
+          git push
